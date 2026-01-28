@@ -129,7 +129,8 @@ export default function DoublePendulum() {
 		omega2: 0,
 	});
 	const trail = useRef<{ x: number; y: number; v: number }[]>([]);
-	const [telemetry, setTelemetry] = useState({ t1: 0, t2: 0 });
+	const elapsedTime = useRef(0);
+	const [telemetry, setTelemetry] = useState({ t1: 0, t2: 0, time: 0 });
 
 	const clearTrail = useCallback(() => {
 		trail.current = [];
@@ -143,9 +144,11 @@ export default function DoublePendulum() {
 			omega2: 0,
 		};
 		trail.current = [];
+		elapsedTime.current = 0;
 		view.current = { zoom: 1, x: 0, y: 0, targetZoom: 1, targetX: 0, targetY: 0 };
 		lastSentZoom.current = 1;
 		setDisplayZoom(1);
+		setTelemetry({ t1: p1.thetaDeg, t2: p2.thetaDeg, time: 0 });
 	}, [p1.thetaDeg, p2.thetaDeg]);
 
 	// Handle Input Changes to Reset physics
@@ -156,6 +159,8 @@ export default function DoublePendulum() {
 			theta2: degToRad(p2.thetaDeg),
 		};
 		trail.current = [];
+		elapsedTime.current = 0;
+		setTelemetry({ t1: p1.thetaDeg, t2: p2.thetaDeg, time: 0 });
 	}, [p1.thetaDeg, p2.thetaDeg]);
 
 	// Mouse/Wheel Events
@@ -283,6 +288,7 @@ export default function DoublePendulum() {
 						) / h;
 
 					trail.current.push({ x: x2, y: y2, v });
+					elapsedTime.current += h;
 				}
 				if (!persistentTrail && trail.current.length > trailLength) {
 					trail.current = trail.current.slice(-trailLength);
@@ -290,6 +296,7 @@ export default function DoublePendulum() {
 				setTelemetry({
 					t1: radToDeg(simState.current.theta1),
 					t2: radToDeg(simState.current.theta2),
+					time: elapsedTime.current,
 				});
 			}
 
@@ -556,6 +563,15 @@ export default function DoublePendulum() {
 									step={0.01}
 									isDarkMode={isDarkMode}
 								/>
+								<Input
+									label="Trail Length"
+									value={trailLength}
+									onChange={setTrailLength}
+									min={10}
+									max={10000}
+									step={10}
+									isDarkMode={isDarkMode}
+								/>
 								<div className="flex items-center justify-between text-[10px] font-bold uppercase py-1">
 									<span className="text-slate-500">Persistent Trail</span>
 									<button
@@ -636,6 +652,13 @@ export default function DoublePendulum() {
 				<div
 					className={`p-4 rounded-xl border ${isDarkMode ? 'bg-slate-900/80 border-white/10' : 'bg-white/80 border-slate-200'} shadow-xl`}>
 					<div className="flex flex-col gap-3">
+						<div className="flex justify-between items-center text-[10px] font-bold border-b border-gray-500/10 pb-2">
+							<span className="text-slate-500">Time Elapsed</span>
+							<span
+								className={`font-mono ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+								{telemetry.time.toFixed(2)}s
+							</span>
+						</div>
 						<TelemetryItem label="θ₁" value={telemetry.t1} color="emerald" />
 						<TelemetryItem label="θ₂" value={telemetry.t2} color="rose" />
 					</div>
