@@ -113,9 +113,9 @@ export default function DoublePendulum() {
 	const [persistentTrail, setPersistentTrail] = useState(false);
 	const [strokeWidth, setStrokeWidth] = useState(2.0);
 
-	// Viewport State
-	const [zoom, setZoom] = useState(1);
-	const [offset, setOffset] = useState({ x: 0, y: 0 });
+	// Viewport State (Refs for rendering and smoothness)
+	const view = useRef({ zoom: 1, x: 0, y: 0, targetZoom: 1, targetX: 0, targetY: 0 });
+	const [displayZoom, setDisplayZoom] = useState(1);
 	const isDragging = useRef(false);
 	const lastMousePos = useRef({ x: 0, y: 0 });
 
@@ -141,8 +141,8 @@ export default function DoublePendulum() {
 			omega2: 0,
 		};
 		trail.current = [];
-		setZoom(1);
-		setOffset({ x: 0, y: 0 });
+		view.current = { zoom: 1, x: 0, y: 0, targetZoom: 1, targetX: 0, targetY: 0 };
+		setDisplayZoom(1);
 	}, [p1.thetaDeg, p2.thetaDeg]);
 
 	// Handle Input Changes to Reset physics
@@ -162,9 +162,28 @@ export default function DoublePendulum() {
 
 		const handleWheel = (e: WheelEvent) => {
 			e.preventDefault();
-			const zoomFactor = 1.1;
-			const newZoom = e.deltaY < 0 ? zoom * zoomFactor : zoom / zoomFactor;
-			setZoom(Math.max(0.1, Math.min(newZoom, 50)));
+
+			const delta = -e.deltaY;
+			const factor = Math.pow(1.1, delta / 100);
+			const newTargetZoom = Math.max(0.1, Math.min(view.current.targetZoom * factor, 100));
+
+			const pivotX = window.innerWidth / 2;
+			const pivotY = window.innerHeight / 3;
+			const mouseX = e.clientX;
+			const mouseY = e.clientY;
+
+			// Zoom at cursor logic
+			const dx = mouseX - pivotX;
+			const dy = mouseY - pivotY;
+
+			const newTargetX =
+				dx - ((dx - view.current.targetX) / view.current.targetZoom) * newTargetZoom;
+			const newTargetY =
+				dy - ((dy - view.current.targetY) / view.current.targetZoom) * newTargetZoom;
+
+			view.current.targetZoom = newTargetZoom;
+			view.current.targetX = newTargetX;
+			view.current.targetY = newTargetY;
 		};
 
 		const handleMouseDown = (e: MouseEvent) => {
@@ -178,7 +197,11 @@ export default function DoublePendulum() {
 			if (isDragging.current) {
 				const dx = e.clientX - lastMousePos.current.x;
 				const dy = e.clientY - lastMousePos.current.y;
-				setOffset((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+				view.current.targetX += dx;
+				view.current.targetY += dy;
+				// Panning also updates current pos slightly faster for responsiveness
+				view.current.x += dx;
+				view.current.y += dy;
 				lastMousePos.current = { x: e.clientX, y: e.clientY };
 			}
 		};
@@ -196,7 +219,7 @@ export default function DoublePendulum() {
 			window.removeEventListener('mousemove', handleMouseMove);
 			window.removeEventListener('mouseup', handleMouseUp);
 		};
-	}, [zoom]);
+	}, []);
 
 	// Main Render Loop
 	useEffect(() => {
@@ -208,6 +231,17 @@ export default function DoublePendulum() {
 		let animationFrameId: number;
 
 		const render = () => {
+			// Update Viewport (Lerp for smoothness)
+			const lerpFac = 0.15;
+			view.current.zoom += (view.current.targetZoom - view.current.zoom) * lerpFac;
+			view.current.x += (view.current.targetX - view.current.x) * lerpFac;
+			view.current.y += (view.current.targetY - view.current.y) * lerpFac;
+
+			// Sync display zoom for UI infrequently
+			if (Math.abs(view.current.zoom - displayZoom) > 0.01) {
+				setDisplayZoom(view.current.zoom);
+			}
+
 			const dpr = window.devicePixelRatio || 1;
 			const w = window.innerWidth;
 			const h_canvas = window.innerHeight;
@@ -242,8 +276,9 @@ export default function DoublePendulum() {
 				});
 			}
 
+			const { zoom, x: offsetX, y: offsetY } = view.current;
 			ctx.save();
-			ctx.translate(w / 2 + offset.x, h_canvas / 3 + offset.y);
+			ctx.translate(w / 2 + offsetX, h_canvas / 3 + offsetY);
 			ctx.scale(zoom, zoom);
 
 			// Adaptive Grid
@@ -253,10 +288,10 @@ export default function DoublePendulum() {
 			const majorStep = step * 10;
 
 			// Calculate visible world coordinates
-			const worldLeft = (-w / 2 - offset.x) / zoom;
-			const worldRight = (w / 2 - offset.x) / zoom;
-			const worldTop = (-h_canvas / 3 - offset.y) / zoom;
-			const worldBottom = ((2 * h_canvas) / 3 - offset.y) / zoom;
+			const worldLeft = (-w / 2 - offsetX) / zoom;
+			const worldRight = (w / 2 - offsetX) / zoom;
+			const worldTop = (-h_canvas / 3 - offsetY) / zoom;
+			const worldBottom = ((2 * h_canvas) / 3 - offsetY) / zoom;
 
 			const startX = Math.floor(worldLeft / step) * step;
 			const endX = Math.ceil(worldRight / step) * step;
@@ -362,9 +397,8 @@ export default function DoublePendulum() {
 		simulationSpeed,
 		persistentTrail,
 		isDarkMode,
-		zoom,
-		offset,
 		strokeWidth,
+		displayZoom,
 	]);
 
 	return (
@@ -380,7 +414,7 @@ export default function DoublePendulum() {
 						Pendulum Precision
 					</h1>
 					<p className="text-[10px] text-slate-500 font-mono">
-						Zoom: {Math.round(zoom * 100)}% | Speed: {simulationSpeed}x
+						Zoom: {Math.round(displayZoom * 100)}% | Speed: {simulationSpeed}x
 					</p>
 				</div>
 				<button
@@ -390,8 +424,9 @@ export default function DoublePendulum() {
 				</button>
 				<button
 					onClick={() => {
-						setZoom(1);
-						setOffset({ x: 0, y: 0 });
+						view.current.targetZoom = 1;
+						view.current.targetX = 0;
+						view.current.targetY = 0;
 					}}
 					className={`p-3 rounded-xl border shadow-xl ${isDarkMode ? 'bg-slate-900 border-white/10 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}>
 					<MousePointer2 size={20} />
