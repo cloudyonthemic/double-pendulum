@@ -112,9 +112,11 @@ export default function DoublePendulum() {
 	const [simulationSpeed, setSimulationSpeed] = useState(1);
 	const [persistentTrail, setPersistentTrail] = useState(false);
 	const [strokeWidth, setStrokeWidth] = useState(2.0);
+	const [trailAlpha, setTrailAlpha] = useState(1.0);
 
 	// Viewport State (Refs for rendering and smoothness)
 	const view = useRef({ zoom: 1, x: 0, y: 0, targetZoom: 1, targetX: 0, targetY: 0 });
+	const lastSentZoom = useRef(1);
 	const [displayZoom, setDisplayZoom] = useState(1);
 	const isDragging = useRef(false);
 	const lastMousePos = useRef({ x: 0, y: 0 });
@@ -126,7 +128,7 @@ export default function DoublePendulum() {
 		omega1: 0,
 		omega2: 0,
 	});
-	const trail = useRef<{ x: number; y: number }[]>([]);
+	const trail = useRef<{ x: number; y: number; v: number }[]>([]);
 	const [telemetry, setTelemetry] = useState({ t1: 0, t2: 0 });
 
 	const clearTrail = useCallback(() => {
@@ -142,6 +144,7 @@ export default function DoublePendulum() {
 		};
 		trail.current = [];
 		view.current = { zoom: 1, x: 0, y: 0, targetZoom: 1, targetX: 0, targetY: 0 };
+		lastSentZoom.current = 1;
 		setDisplayZoom(1);
 	}, [p1.thetaDeg, p2.thetaDeg]);
 
@@ -164,8 +167,12 @@ export default function DoublePendulum() {
 			e.preventDefault();
 
 			const delta = -e.deltaY;
-			const factor = Math.pow(1.1, delta / 100);
-			const newTargetZoom = Math.max(0.1, Math.min(view.current.targetZoom * factor, 100));
+			// Use a more responsive factor that depends on the current zoom level to avoid "slowing down"
+			const sensitivity = delta > 0 ? 1.15 : 1 / 1.15;
+			const newTargetZoom = Math.max(
+				0.01,
+				Math.min(view.current.targetZoom * sensitivity, 1000),
+			);
 
 			const pivotX = window.innerWidth / 2;
 			const pivotY = window.innerHeight / 3;
@@ -232,13 +239,14 @@ export default function DoublePendulum() {
 
 		const render = () => {
 			// Update Viewport (Lerp for smoothness)
-			const lerpFac = 0.15;
+			const lerpFac = 0.1;
 			view.current.zoom += (view.current.targetZoom - view.current.zoom) * lerpFac;
 			view.current.x += (view.current.targetX - view.current.x) * lerpFac;
 			view.current.y += (view.current.targetY - view.current.y) * lerpFac;
 
-			// Sync display zoom for UI infrequently
-			if (Math.abs(view.current.zoom - displayZoom) > 0.01) {
+			// Sync display zoom for UI infrequently WITHOUT restarting the effect
+			if (Math.abs(view.current.zoom - lastSentZoom.current) > 0.05) {
+				lastSentZoom.current = view.current.zoom;
 				setDisplayZoom(view.current.zoom);
 			}
 
@@ -260,12 +268,21 @@ export default function DoublePendulum() {
 			if (isPlaying) {
 				const params: Params = { L1: p1.L, L2: p2.L, m1: p1.m, m2: p2.m, g };
 				for (let i = 0; i < simulationSpeed; i++) {
+					const prevState = { ...simState.current };
 					simState.current = stepRK4(simState.current, params, h);
 					const x1 = p1.L * Math.sin(simState.current.theta1);
 					const y1 = p1.L * Math.cos(simState.current.theta1);
 					const x2 = x1 + p2.L * Math.sin(simState.current.theta2);
 					const y2 = y1 + p2.L * Math.cos(simState.current.theta2);
-					trail.current.push({ x: x2, y: y2 });
+
+					// Store velocity for color mapping
+					const v =
+						Math.sqrt(
+							Math.pow(simState.current.theta1 - prevState.theta1, 2) +
+								Math.pow(simState.current.theta2 - prevState.theta2, 2),
+						) / h;
+
+					trail.current.push({ x: x2, y: y2, v });
 				}
 				if (!persistentTrail && trail.current.length > trailLength) {
 					trail.current = trail.current.slice(-trailLength);
@@ -338,17 +355,29 @@ export default function DoublePendulum() {
 			}
 			ctx.stroke();
 
-			// Trail
+			// Trail Rendering (High-Fidelity Neon Effect)
 			if (trail.current.length > 1) {
-				ctx.strokeStyle = isDarkMode ? '#ef4444' : '#dc2626';
-				ctx.lineWidth = strokeWidth / zoom;
+				ctx.save();
+
+				// Optional velocity-based color shifting or fixed neon
+				const trailColor = isDarkMode ? '#ef4444' : '#dc2626';
 				ctx.lineJoin = 'round';
 				ctx.lineCap = 'round';
+
+				// Main Path Pass
+				ctx.strokeStyle = isDarkMode
+					? `rgba(239, 68, 68, ${trailAlpha})`
+					: `rgba(220, 38, 38, ${trailAlpha})`;
+				ctx.lineWidth = strokeWidth / zoom;
+				if (isDarkMode) ctx.globalCompositeOperation = 'lighter';
+
 				ctx.beginPath();
 				ctx.moveTo(trail.current[0].x, trail.current[0].y);
 				for (let i = 1; i < trail.current.length; i++)
 					ctx.lineTo(trail.current[i].x, trail.current[i].y);
 				ctx.stroke();
+
+				ctx.restore();
 			}
 
 			// Pendulum
@@ -387,19 +416,7 @@ export default function DoublePendulum() {
 
 		render();
 		return () => cancelAnimationFrame(animationFrameId);
-	}, [
-		isPlaying,
-		p1,
-		p2,
-		h,
-		g,
-		trailLength,
-		simulationSpeed,
-		persistentTrail,
-		isDarkMode,
-		strokeWidth,
-		displayZoom,
-	]);
+	}, [isPlaying, p1, p2, persistentTrail, isDarkMode, strokeWidth, trailAlpha]);
 
 	return (
 		<div
@@ -458,8 +475,11 @@ export default function DoublePendulum() {
 								<Input
 									label="θ₁ (deg)"
 									value={p1.thetaDeg}
-									onChange={(v: number) => setP1((p) => ({ ...p, thetaDeg: v }))}
-									min={-360}
+									onChange={(v: number) => {
+										const normalized = ((v % 360) + 360) % 360;
+										setP1((p) => ({ ...p, thetaDeg: normalized }));
+									}}
+									min={0}
 									max={360}
 									step={1}
 									isDarkMode={isDarkMode}
@@ -488,8 +508,11 @@ export default function DoublePendulum() {
 								<Input
 									label="θ₂ (deg)"
 									value={p2.thetaDeg}
-									onChange={(v: number) => setP2((p) => ({ ...p, thetaDeg: v }))}
-									min={-360}
+									onChange={(v: number) => {
+										const normalized = ((v % 360) + 360) % 360;
+										setP2((p) => ({ ...p, thetaDeg: normalized }));
+									}}
+									min={0}
 									max={360}
 									step={1}
 									isDarkMode={isDarkMode}
@@ -524,11 +547,20 @@ export default function DoublePendulum() {
 									step={0.1}
 									isDarkMode={isDarkMode}
 								/>
+								<Input
+									label="Trail Alpha"
+									value={trailAlpha}
+									onChange={setTrailAlpha}
+									min={0.01}
+									max={1}
+									step={0.01}
+									isDarkMode={isDarkMode}
+								/>
 								<div className="flex items-center justify-between text-[10px] font-bold uppercase py-1">
 									<span className="text-slate-500">Persistent Trail</span>
 									<button
 										onClick={() => setPersistentTrail(!persistentTrail)}
-										className={`w-8 h-4 rounded-full relative ${persistentTrail ? 'bg-emerald-500' : 'bg-slate-700'}`}>
+										className={`w-8 h-4 rounded-full relative transition-all ${persistentTrail ? 'bg-emerald-500' : 'bg-slate-700'}`}>
 										<div
 											className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-all ${persistentTrail ? 'ml-4' : ''}`}
 										/>
@@ -641,13 +673,49 @@ function Input({
 	step: number;
 	isDarkMode: boolean;
 }) {
+	const [isEditing, setIsEditing] = useState(false);
+	const [tempValue, setTempValue] = useState(value.toString());
+
+	const handleBlur = () => {
+		setIsEditing(false);
+		const parsed = parseFloat(tempValue);
+		if (!isNaN(parsed)) {
+			onChange(parsed);
+		}
+	};
+
+	const handleKeyDown = (e: React.KeyboardEvent) => {
+		if (e.key === 'Enter') handleBlur();
+		if (e.key === 'Escape') {
+			setIsEditing(false);
+			setTempValue(value.toString());
+		}
+	};
+
 	return (
 		<div className="flex flex-col gap-1.5">
-			<div className="flex justify-between text-[10px] font-bold">
+			<div className="flex justify-between text-[10px] font-bold items-center h-4">
 				<span className="text-slate-400">{label}</span>
-				<span className={isDarkMode ? 'text-white' : 'text-slate-900'}>
-					{value.toFixed(2)}
-				</span>
+				{isEditing ? (
+					<input
+						autoFocus
+						type="number"
+						value={tempValue}
+						onChange={(e) => setTempValue(e.target.value)}
+						onBlur={handleBlur}
+						onKeyDown={handleKeyDown}
+						className={`w-16 text-right bg-transparent border-b border-emerald-500 outline-none ${isDarkMode ? 'text-white' : 'text-slate-900'} [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`}
+					/>
+				) : (
+					<span
+						onClick={() => {
+							setIsEditing(true);
+							setTempValue(value.toFixed(2));
+						}}
+						className={`cursor-pointer hover:text-emerald-500 transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+						{value.toFixed(2)}
+					</span>
+				)}
 			</div>
 			<input
 				type="range"
@@ -671,18 +739,19 @@ function TelemetryItem({
 	value: number;
 	color: 'emerald' | 'rose';
 }) {
+	const normalized = ((value % 360) + 360) % 360;
 	const bg = color === 'emerald' ? 'bg-emerald-500' : 'bg-rose-500';
 	const text = color === 'emerald' ? 'text-emerald-500' : 'text-rose-500';
 	return (
 		<div className="space-y-1">
 			<div className="flex justify-between text-[10px] font-bold">
 				<span className="text-slate-500">{label}</span>
-				<span className={`font-mono ${text}`}>{value.toFixed(2)}°</span>
+				<span className={`font-mono ${text}`}>{normalized.toFixed(2)}°</span>
 			</div>
 			<div className="w-full h-1 bg-gray-500/10 rounded-full overflow-hidden">
 				<motion.div
 					initial={false}
-					animate={{ width: `${(Math.abs(value % 360) / 360) * 100}%` }}
+					animate={{ width: `${(normalized / 360) * 100}%` }}
 					className={`h-full ${bg}`}
 				/>
 			</div>
