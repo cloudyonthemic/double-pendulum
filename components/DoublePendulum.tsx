@@ -246,20 +246,62 @@ export default function DoublePendulum() {
 			ctx.translate(w / 2 + offset.x, h_canvas / 3 + offset.y);
 			ctx.scale(zoom, zoom);
 
-			// Simple Grid
-			ctx.strokeStyle = isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+			// Adaptive Grid
+			const baseDensity = 100;
+			const exp = Math.floor(Math.log10(1 / zoom));
+			const step = baseDensity * Math.pow(10, exp);
+			const majorStep = step * 10;
+
+			// Calculate visible world coordinates
+			const worldLeft = (-w / 2 - offset.x) / zoom;
+			const worldRight = (w / 2 - offset.x) / zoom;
+			const worldTop = (-h_canvas / 3 - offset.y) / zoom;
+			const worldBottom = ((2 * h_canvas) / 3 - offset.y) / zoom;
+
+			const startX = Math.floor(worldLeft / step) * step;
+			const endX = Math.ceil(worldRight / step) * step;
+			const startY = Math.floor(worldTop / step) * step;
+			const endY = Math.ceil(worldBottom / step) * step;
+
+			const gridColorMinor = isDarkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)';
+			const gridColorMajor = isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+
 			ctx.lineWidth = 1 / zoom;
-			const gridSize = 100;
-			for (let x = -2000; x <= 2000; x += gridSize) {
-				ctx.beginPath();
-				ctx.moveTo(x, -2000);
-				ctx.lineTo(x, 2000);
-				ctx.stroke();
-				ctx.beginPath();
-				ctx.moveTo(-2000, x);
-				ctx.lineTo(2000, x);
-				ctx.stroke();
+
+			// Draw Minor Lines
+			ctx.strokeStyle = gridColorMinor;
+			ctx.beginPath();
+			for (let x = startX; x <= endX; x += step) {
+				ctx.moveTo(x, worldTop);
+				ctx.lineTo(x, worldBottom);
 			}
+			for (let y = startY; y <= endY; y += step) {
+				ctx.moveTo(worldLeft, y);
+				ctx.lineTo(worldRight, y);
+			}
+			ctx.stroke();
+
+			// Draw Major Lines
+			ctx.strokeStyle = gridColorMajor;
+			ctx.lineWidth = 2 / zoom;
+			ctx.beginPath();
+			for (
+				let x = Math.floor(worldLeft / majorStep) * majorStep;
+				x <= worldRight;
+				x += majorStep
+			) {
+				ctx.moveTo(x, worldTop);
+				ctx.lineTo(x, worldBottom);
+			}
+			for (
+				let y = Math.floor(worldTop / majorStep) * majorStep;
+				y <= worldBottom;
+				y += majorStep
+			) {
+				ctx.moveTo(worldLeft, y);
+				ctx.lineTo(worldRight, y);
+			}
+			ctx.stroke();
 
 			// Trail
 			if (trail.current.length > 1) {
